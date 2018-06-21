@@ -51,7 +51,7 @@ class DownloadPicturePipeline(object):
     def open_spider(self, spider):
         self.queue = queue.Queue()
         self.base_dir = os.path.abspath(os.path.dirname(__file__))
-        self.wait_time = 30
+        self.wait_time = 90
         self.threads = []
 
         # 创建存储图片文件夹

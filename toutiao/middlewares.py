@@ -5,12 +5,13 @@
 # See documentation in:
 # https://doc.scrapy.org/en/latest/topics/spider-middleware.html
 
-from scrapy import signals
+from scrapy import signals,Request
 from scrapy.exceptions import IgnoreRequest
 from .logger import logger
 import requests
 import re
 import time
+from .exceptions import NeedProxyError
 
 
 class ToutiaoSpiderMiddleware(object):
@@ -123,31 +124,28 @@ class ProxiesMiddleware(object):
                 if max_try > 10:
                     return None
                 self._get_ramdom_proxies(max_try=max_try + 1)
-        except ConnectionError as e:
+        except Exception as e:
             logger.exception('connect error')
             return None
 
     @classmethod
     def from_crawler(cls, crawler):
         return cls(
-                proxies_pool_url=crawler.settings.get('PROXIES_POOL_URL')
+            proxies_pool_url=crawler.settings.get('PROXIES_POOL_URL')
         )
 
     def process_request(self, request, spider):
-        if not request.meta.get('use_proxy'):
-            return None
-        # 使用代理
-        proxies = self._get_ramdom_proxies()
-        if proxies:
-            logger.info('Using proxies:' + proxies)
-            request.meta['proxy'] = 'http://' + proxies
-        else:
-            logger.warning('No valid proxies')
+        if request.meta.get('use_proxy'):
+            raise NeedProxyError('need proxies')
 
     def process_response(self, request, response, spider):
 
-        info = '{url},status {status}'
-        logger.info(info.format(url=response.url, status=response.status))
+        info = '{url},proxies {proxies},status {status}'
+        logger.info(info.format(url=response.url,proxies=request.meta.get('proxy'), status=response.status))
+        if response.status == 403:
+            meta = request.meta
+            meta['use_proxy'] = True
+            return Request(url=response.url,callback=request.callback,meta=meta,dont_filter=True)
         if re.search(r'(4|5)\d+', str(response.status)):
             raise IgnoreRequest
         return response
@@ -160,12 +158,16 @@ class ProxiesMiddleware(object):
         # - return None: continue processing this exception
         # - return a Response object: stops process_exception() chain
         # - return a Request object: stops process_exception() chain
-        if not request.meta.get('use_proxy'):
-            return None
-        logger.warning('retry use proxies...')
+
+        # if not request.meta.get('use_proxy'):
+        #     return None
         proxies = self._get_ramdom_proxies()
+        meta = request.meta
         if proxies:
-            request.meta['proxy'] = proxies
-            return request
+            logger.warning('use proxies:{proxies} for {url}'.format(proxies=proxies,url=request.url))
+            meta['proxy'] = 'http://' + proxies
+            meta['has_proxy'] = True
+            meta['download_timeout'] = 5
         else:
-            logger.warning('No valid proxies')
+            logger.warning('No valid proxies or exception')
+        return Request(url=request.url,callback=request.callback,meta=meta,dont_filter=True)
